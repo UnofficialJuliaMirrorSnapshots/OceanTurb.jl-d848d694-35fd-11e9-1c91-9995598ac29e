@@ -1,31 +1,37 @@
-using Pkg; Pkg.activate(".."); Pkg.instantiate()
-
 using OceanTurb, Printf
+
+using OceanTurb.ModularKPP: HoltslagDiffusivity, ROMSMixingDepth
 
 @use_pyplot_utils
 
 usecmbright()
 
-modelsetup = (N=100, L=100, stepper=:BackwardEuler)
+modelsetup = (N=128, L=128, stepper=:BackwardEuler)
 
-Fb = 2e-8
+Fb = 1e-7
 Fu = 0.0
-Tz = 0.001
-Δt = 10*minute
-tf = 8*hour
+N² = 1e-5
+Δt = 10minute
+Δi = 12hour
+
+name = "Free convection
+    \\small{with \$ \\overline{w b} |_{z=0} = 10^{-7} \\, \\mathrm{m^2 \\, s^{-3}}\$}"
 
         cvmix = ModularKPP.Model(; modelsetup...)
 
-     holtslag = ModularKPP.Model(; modelsetup..., diffusivity = ModularKPP.HoltslagDiffusivityParameters())
+     holtslag = ModularKPP.Model(; modelsetup...,
+                                   diffusivity = HoltslagDiffusivity())
 
-         roms = ModularKPP.Model(; modelsetup..., mixingdepth = ModularKPP.ROMSMixingDepthParameters())
+         roms = ModularKPP.Model(; modelsetup...,
+                                   mixingdepth = ROMSMixingDepth())
 
-holtslag_roms = ModularKPP.Model(; modelsetup..., diffusivity = ModularKPP.HoltslagDiffusivityParameters(),
-                                                  mixingdepth = ModularKPP.ROMSMixingDepthParameters())
-
+holtslag_roms = ModularKPP.Model(; modelsetup...,
+                                   diffusivity = HoltslagDiffusivity(),
+                                   mixingdepth = ROMSMixingDepth())
 
 # Initial condition and fluxes
-T₀(z) = 20 + Tz*z
+dTdz = N² / (cvmix.constants.α * cvmix.constants.g)
+T₀(z) = 20 + dTdz*z
 
 models = (cvmix, holtslag, roms, holtslag_roms)
 
@@ -34,20 +40,22 @@ for model in models
 
     Fθ = Fb / (model.constants.α * model.constants.g)
     model.bcs.U.top = FluxBoundaryCondition(Fu)
+
     model.bcs.T.top = FluxBoundaryCondition(Fθ)
-    model.bcs.T.bottom = GradientBoundaryCondition(Tz)
+    model.bcs.T.bottom = GradientBoundaryCondition(dTdz)
+
 end
 
 fig, axs = subplots()
 
 removespines("top", "right")
-xlabel("Temperature")
+xlabel("Temperature \$ \\, {}^\\circ \\mathrm{C} \$")
 ylabel(L"z \, \mathrm{(m)}")
 
 for i = 1:5
     if i > 1
         for model in models
-            run_until!(model, Δt, (i-1)*10hour)
+            run_until!(model, Δt, (i-1) * Δi)
         end
     end
 
@@ -85,16 +93,19 @@ for i = 1:5
             @sprintf("\$ t = %.0f \$ hours", time(cvmix)/hour),
             verticalalignment="bottom", horizontalalignment="center", color=defaultcolors[i])
     else
-        tlabel = text(maximum(cvmix.solution.T.data)-0.003, -holtslag_roms.state.h,
+        tlabel = text(maximum(cvmix.solution.T.data)-0.001, -holtslag_roms.state.h,
             @sprintf("\$ t = %.0f \$ hours", time(cvmix)/hour),
             verticalalignment="bottom", horizontalalignment="left", color=defaultcolors[i])
     end
 
     plot(cvmix.solution.T,          "-",  color=defaultcolors[i], label=vlabel, alpha=0.8, markersize=1.5)
     plot(holtslag.solution.T,       "-.", color=defaultcolors[i], label=hlabel, alpha=0.8, markersize=1.5)
-    plot(roms.solution.T,           ":",  color=defaultcolors[i], label=rlabel, alpha=0.8, markersize=1.5)
-    plot(holtslag_roms.solution.T,  "--", color=defaultcolors[i], label=mlabel, alpha=0.8, markersize=1.5)
+    plot(roms.solution.T,           "--",  color=defaultcolors[i], label=rlabel, alpha=0.8, markersize=1.5)
+    plot(holtslag_roms.solution.T,  ":", color=defaultcolors[i], label=mlabel, alpha=0.8, markersize=1.5)
 end
 
+title(name)
 legend(fontsize=10)
 gcf()
+
+savefig("figs/free_convection_intermodel.png", dpi=480)
